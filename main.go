@@ -10,39 +10,35 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"nexus-sds.com/netcheck/pkg/core"
 )
 
-type Host struct {
-	HostName  string
-	CheckType string
-}
+// Precompiled regex for config lines: 3-4 char check type + whitespace + hostname
+var reLine = regexp.MustCompile(`^([a-zA-Z0-9]{3,4})\s+(.+)$`)
 
-// Precompiled regex for config lines: 3-char check type + whitespace + hostname
-var reLine = regexp.MustCompile(`^([a-zA-Z0-9]{3})\s+(.+)$`)
-
-func parseHostString(input string) (*Host, error) {
+func parseHostString(input string) (*core.Host, error) {
 	input = strings.TrimSpace(input)
 	matches := reLine.FindStringSubmatch(input)
 
 	if matches == nil {
-		return nil, fmt.Errorf("invalid format: must be '3-char-checktype hostname'")
+		return nil, fmt.Errorf("invalid format: must be '3-4 char checktype hostname'")
 	}
 
-	return &Host{
+	return &core.Host{
 		CheckType: strings.ToUpper(matches[1]),
 		HostName:  matches[2],
 	}, nil
 }
 
 // Stream directly from config file to hosts to avoid keeping all lines in memory
-func hostsFromConfig(path string) ([]Host, error) {
+func hostsFromConfig(path string) ([]core.Host, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer file.Close()
 
-	hosts := make([]Host, 0, 128)
+	hosts := make([]core.Host, 0, 128)
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -73,7 +69,30 @@ func main() {
 		log.Fatal().Err(err).Str("config", *cfgPath).Msg("failed to load config")
 	}
 	for _, host := range hosts {
-		log.Info().Str("host", host.HostName).Str("checkType", host.CheckType).Msg("checking host")
+		
+		checkLabel := "Unknown"
+		if label, ok := core.CheckTypeNames[host.CheckType]; ok {
+			checkLabel = label
+		}
+
+		log.Info().Str("host", host.HostName).Str("checkType", host.CheckType).Str("checkLabel", checkLabel).Msg("checking host")
+		checkFunc, ok := core.CheckTypes[host.CheckType]
+		if !ok {
+			log.Error().Str("host", host.HostName).Str("checkType", host.CheckType).Str("checkLabel", checkLabel).Msg("unknown check type")
+			continue
+		}
+
+		passed, err := checkFunc(host)
+		if err != nil {
+			log.Error().Err(err).Str("host", host.HostName).Str("checkType", host.CheckType).Str("checkLabel", checkLabel).Msg("check error")
+			continue
+		}
+
+		if !passed {
+			log.Error().Str("host", host.HostName).Str("checkType", host.CheckType).Str("checkLabel", checkLabel).Msg("host failed check")
+		} else {
+			log.Info().Str("host", host.HostName).Str("checkType", host.CheckType).Str("checkLabel", checkLabel).Msg("host passed check")
+		}
 	}
 	log.Info().Int("hostCount", len(hosts)).Str("config", *cfgPath).Msg("config parsed")
 
