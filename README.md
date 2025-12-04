@@ -296,3 +296,5 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the f
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+We allow for both humans and bots (including ai coding tools) to contribute. If you're a bot, please add the `bot` label to your PR.
