@@ -3,9 +3,14 @@ package core
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
+
+	lua "github.com/yuin/gopher-lua"
 )
 
 type Host struct {
@@ -18,6 +23,8 @@ var CheckTypes = map[string]func(host Host) (bool, error){
 	"HTTP": HttpCheck,
 	"HTPS": HttpsCheck,
 	"COMB": ComboHttpCheck,
+	"LUA":  LuaScript,
+	"PY":   PythonScript,
 }
 
 var CheckTypeNames = map[string]string{
@@ -25,6 +32,8 @@ var CheckTypeNames = map[string]string{
 	"HTTP": "HTTP Check",
 	"HTPS": "HTTPS Check",
 	"COMB": "Combo HTTP/HTTPS Check",
+	"LUA":  "Lua Script",
+	"PY":   "Python Script",
 }
 
 func IcmpPing(host Host) (bool, error) {
@@ -129,4 +138,104 @@ func ComboHttpCheck(host Host) (bool, error) {
 
 	// Both failed
 	return false, fmt.Errorf("both checks failed - %v; %v", httpErr, httpsErr)
+}
+
+func LuaScript(host Host) (bool, error) {
+	// Parse hostname field to extract script name and actual hostname
+	// Expected format: "scriptname.lua hostname"
+	parts := strings.Fields(host.HostName)
+	if len(parts) < 2 {
+		return false, fmt.Errorf("invalid lua check format: expected 'scriptname.lua hostname', got '%s'", host.HostName)
+	}
+
+	scriptName := parts[0]
+	actualHostname := strings.Join(parts[1:], " ")
+
+	// Ensure script name ends with .lua
+	if !strings.HasSuffix(strings.ToLower(scriptName), ".lua") {
+		scriptName += ".lua"
+	}
+
+	// Construct path to script in scripts folder
+	scriptPath := filepath.Join("scripts", scriptName)
+
+	// Check if script exists
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return false, fmt.Errorf("script not found: %s", scriptPath)
+	}
+
+	// Create new Lua state
+	L := lua.NewState()
+	defer L.Close()
+
+	// Set hostname as global variable for the script
+	L.SetGlobal("hostname", lua.LString(actualHostname))
+
+	// Execute the Lua script
+	if err := L.DoFile(scriptPath); err != nil {
+		return false, fmt.Errorf("lua script error: %w", err)
+	}
+
+	// Get the result from the global variable 'result' set by the script
+	result := L.GetGlobal("result")
+	if result == lua.LNil {
+		return false, fmt.Errorf("lua script did not set 'result' variable")
+	}
+
+	// Convert result to boolean
+	resultBool := lua.LVAsBool(result)
+
+	// Check if there's an error message from the script
+	errorMsg := L.GetGlobal("error_message")
+	if !resultBool && errorMsg != lua.LNil {
+		return false, fmt.Errorf("lua script failed: %s", errorMsg.String())
+	}
+
+	return resultBool, nil
+}
+
+func PythonScript(host Host) (bool, error) {
+	// Parse hostname field to extract script name and actual hostname
+	// Expected format: "scriptname.py hostname"
+	parts := strings.Fields(host.HostName)
+	if len(parts) < 2 {
+		return false, fmt.Errorf("invalid python check format: expected 'scriptname.py hostname', got '%s'", host.HostName)
+	}
+
+	scriptName := parts[0]
+	actualHostname := strings.Join(parts[1:], " ")
+
+	// Ensure script name ends with .py
+	if !strings.HasSuffix(strings.ToLower(scriptName), ".py") {
+		scriptName += ".py"
+	}
+
+	// Construct path to script in scripts folder
+	scriptPath := filepath.Join("scripts", scriptName)
+
+	// Check if script exists
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return false, fmt.Errorf("script not found: %s", scriptPath)
+	}
+
+	// Try python3 first, fall back to python
+	pythonCmd := "python3"
+	if _, err := exec.LookPath("python3"); err != nil {
+		pythonCmd = "python"
+	}
+
+	// Execute the Python script with hostname as argument
+	cmd := exec.Command(pythonCmd, scriptPath, actualHostname)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Script failed - include output in error message
+		if len(output) > 0 {
+			return false, fmt.Errorf("python script failed: %s", strings.TrimSpace(string(output)))
+		}
+		return false, fmt.Errorf("python script failed: %w", err)
+	}
+
+	// Script succeeded
+	return true, nil
 }

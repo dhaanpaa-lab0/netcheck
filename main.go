@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -13,15 +14,15 @@ import (
 	"nexus-sds.com/netcheck/pkg/core"
 )
 
-// Precompiled regex for config lines: 3-4 char check type + whitespace + hostname
-var reLine = regexp.MustCompile(`^([a-zA-Z0-9]{3,4})\s+(.+)$`)
+// Precompiled regex for config lines: 2-4 char check type + whitespace + hostname
+var reLine = regexp.MustCompile(`^([a-zA-Z0-9]{2,4})\s+(.+)$`)
 
 func parseHostString(input string) (*core.Host, error) {
 	input = strings.TrimSpace(input)
 	matches := reLine.FindStringSubmatch(input)
 
 	if matches == nil {
-		return nil, fmt.Errorf("invalid format: must be '3-4 char checktype hostname'")
+		return nil, fmt.Errorf("invalid format: must be '2-4 char checktype hostname'")
 	}
 
 	return &core.Host{
@@ -58,15 +59,44 @@ func hostsFromConfig(path string) ([]core.Host, error) {
 }
 
 func main() {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-	log.Info().Msg("starting up")
-
+	// Define flags
 	cfgPath := flag.String("config", "netcheck.txt", "path to config file")
+	cfgPathAlt := flag.String("f", "", "path to config file (alternative to -config)")
+	batchMode := flag.Bool("b", false, "batch mode - disable 'press any key' prompt")
+	transcriptPath := flag.String("l", "", "path to transcript log file")
 	flag.Parse()
 
-	hosts, err := hostsFromConfig(*cfgPath)
+	// Use -f flag if provided, otherwise use -config
+	configFile := *cfgPath
+	if *cfgPathAlt != "" {
+		configFile = *cfgPathAlt
+	}
+
+	// Setup logging
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr}
+
+	var logWriter io.Writer = consoleWriter
+	var transcriptFile *os.File
+
+	// If transcript logging is enabled, write to both console and file
+	if *transcriptPath != "" {
+		var err error
+		transcriptFile, err = os.OpenFile(*transcriptPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatal().Err(err).Str("transcript", *transcriptPath).Msg("failed to open transcript file")
+		}
+		defer transcriptFile.Close()
+
+		// Create multi-writer to output to both console and file
+		logWriter = io.MultiWriter(consoleWriter, transcriptFile)
+	}
+
+	log.Logger = log.Output(logWriter)
+	log.Info().Msg("starting up")
+
+	hosts, err := hostsFromConfig(configFile)
 	if err != nil {
-		log.Fatal().Err(err).Str("config", *cfgPath).Msg("failed to load config")
+		log.Fatal().Err(err).Str("config", configFile).Msg("failed to load config")
 	}
 	for _, host := range hosts {
 		
@@ -94,9 +124,12 @@ func main() {
 			log.Info().Str("host", host.HostName).Str("checkType", host.CheckType).Str("checkLabel", checkLabel).Msg("host passed check")
 		}
 	}
-	log.Info().Int("hostCount", len(hosts)).Str("config", *cfgPath).Msg("config parsed")
+	log.Info().Int("hostCount", len(hosts)).Str("config", configFile).Msg("config parsed")
 
-	fmt.Print("Press any key to exit...")
-	var input string
-	fmt.Scanln(&input)
+	// Only prompt if not in batch mode
+	if !*batchMode {
+		fmt.Print("Press any key to exit...")
+		var input string
+		fmt.Scanln(&input)
+	}
 }

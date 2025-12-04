@@ -12,8 +12,8 @@ The project follows a simple two-layer architecture:
 
 ### Main Package (`main.go`)
 - Entry point and CLI handling
-- Config file parsing: reads `netcheck.txt` (or custom path via `-config` flag)
-- Config format: `<3-4 char check-type> <hostname>` (e.g., `icmp 127.0.0.1`)
+- Config file parsing: reads `netcheck.txt` (or custom path via `-config` or `-f` flag)
+- Config format: `<2-4 char check-type> <hostname>` (e.g., `icmp 127.0.0.1`, `py script.py host`)
 - Logging setup using zerolog with console output
 - Orchestrates check execution by calling core package functions
 
@@ -40,6 +40,20 @@ The project follows a simple two-layer architecture:
     - Returns true if EITHER port returns 200 OK or 404 Not Found
     - Returns false only if both checks fail
     - 5-second timeout per request
+  - **LUA (Lua Script)**: Executes a custom Lua script from the `scripts` folder
+    - Config format: `lua scriptname.lua hostname`
+    - Scripts must be located in the `scripts` folder
+    - Scripts receive `hostname` as a global variable
+    - Scripts must set `result` (boolean) and optionally `error_message` (string)
+    - See `scripts/README.md` for script writing guide
+  - **PY (Python Script)**: Executes a custom Python script from the `scripts` folder
+    - Config format: `py scriptname.py hostname`
+    - Scripts must be located in the `scripts` folder
+    - Scripts receive hostname as command-line argument (`sys.argv[1]`)
+    - Scripts must exit with code 0 (success) or non-zero (failure)
+    - Error messages should be printed to stderr
+    - Uses `python3` command (falls back to `python` if not available)
+    - See `scripts/README.md` for script writing guide
 
 ### Adding New Check Types
 To add a new check type:
@@ -59,9 +73,25 @@ go build -o netcheck
 # Default config (netcheck.txt)
 ./netcheck
 
-# Custom config
+# Custom config (using -config or -f)
 ./netcheck -config path/to/config.txt
+./netcheck -f path/to/config.txt
+
+# Batch mode (no "press any key" prompt)
+./netcheck -b
+
+# With transcript logging to file
+./netcheck -l transcript.log
+
+# Combine multiple flags
+./netcheck -b -f myconfig.txt -l output.log
 ```
+
+### Command-Line Flags
+- `-config <path>`: Path to config file (default: "netcheck.txt")
+- `-f <path>`: Alternative flag for config file path
+- `-b`: Batch mode - disables the "press any key to exit" prompt
+- `-l <path>`: Log transcript to file (JSON format) in addition to console output
 
 ### Run without building
 ```bash
@@ -81,9 +111,11 @@ go mod tidy
 ## Configuration File Format
 
 The config file (`netcheck.txt` by default) uses a simple line-based format:
-- Format: `<3-4 char checktype> <hostname>`
+- Format: `<2-4 char checktype> <hostname>`
 - Check types are case-insensitive (converted to uppercase)
 - Empty lines and lines starting with `#` are ignored
+- For Lua scripts: `lua <scriptname.lua> <hostname>`
+- For Python scripts: `py <scriptname.py> <hostname>`
 - Example:
   ```
   icmp ecore-vm1
@@ -91,9 +123,15 @@ The config file (`netcheck.txt` by default) uses a simple line-based format:
   http example.com
   htps example.com
   comb example.com
+  lua example_ping.lua 127.0.0.1
+  lua tcp_port_check.lua example.com:443
+  py example_ping.py 127.0.0.1
+  py tcp_port_check.py example.com:443
+  py http_check.py https://example.com
   ```
 
 ## Dependencies
 
 - `github.com/rs/zerolog`: Structured logging with console-friendly output
+- `github.com/yuin/gopher-lua`: Lua interpreter for running custom check scripts
 - Uses Go 1.25.4
