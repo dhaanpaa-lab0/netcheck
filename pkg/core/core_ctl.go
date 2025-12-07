@@ -25,6 +25,7 @@ var CheckTypes = map[string]func(host Host) (bool, error){
 	"COMB": ComboHttpCheck,
 	"LUA":  LuaScript,
 	"PY":   PythonScript,
+	"PS":   PowerShellScript,
 }
 
 var CheckTypeNames = map[string]string{
@@ -34,6 +35,7 @@ var CheckTypeNames = map[string]string{
 	"COMB": "Combo HTTP/HTTPS Check",
 	"LUA":  "Lua Script",
 	"PY":   "Python Script",
+	"PS":   "PowerShell Script",
 }
 
 func IcmpPing(host Host) (bool, error) {
@@ -234,6 +236,53 @@ func PythonScript(host Host) (bool, error) {
 			return false, fmt.Errorf("python script failed: %s", strings.TrimSpace(string(output)))
 		}
 		return false, fmt.Errorf("python script failed: %w", err)
+	}
+
+	// Script succeeded
+	return true, nil
+}
+
+func PowerShellScript(host Host) (bool, error) {
+	// Parse hostname field to extract script name and actual hostname
+	// Expected format: "scriptname.ps1 hostname"
+	parts := strings.Fields(host.HostName)
+	if len(parts) < 2 {
+		return false, fmt.Errorf("invalid powershell check format: expected 'scriptname.ps1 hostname', got '%s'", host.HostName)
+	}
+
+	scriptName := parts[0]
+	actualHostname := strings.Join(parts[1:], " ")
+
+	// Ensure script name ends with .ps1
+	if !strings.HasSuffix(strings.ToLower(scriptName), ".ps1") {
+		scriptName += ".ps1"
+	}
+
+	// Construct path to script in scripts folder
+	scriptPath := filepath.Join("scripts", scriptName)
+
+	// Check if script exists
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return false, fmt.Errorf("script not found: %s", scriptPath)
+	}
+
+	// Try pwsh (PowerShell 7+) first, fall back to powershell (Windows PowerShell)
+	psCmd := "pwsh"
+	if _, err := exec.LookPath("pwsh"); err != nil {
+		psCmd = "powershell"
+	}
+
+	// Execute the PowerShell script with hostname as argument
+	// Use -File to execute the script and pass hostname as argument
+	cmd := exec.Command(psCmd, "-NoProfile", "-NonInteractive", "-File", scriptPath, actualHostname)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Script failed - include output in error message
+		if len(output) > 0 {
+			return false, fmt.Errorf("powershell script failed: %s", strings.TrimSpace(string(output)))
+		}
+		return false, fmt.Errorf("powershell script failed: %w", err)
 	}
 
 	// Script succeeded

@@ -4,11 +4,14 @@ A lightweight, configurable network monitoring tool written in Go that performs 
 
 ## Features
 
-- **Multiple Check Types**: ICMP ping, HTTP, HTTPS, and combo checks
+- **Multiple Check Types**: ICMP ping, HTTP, HTTPS, combo checks, and custom scripts
+- **Scripting Support**: Extend functionality with Lua, Python, and PowerShell scripts
 - **Simple Configuration**: Text-based config file format
 - **No Root Required**: ICMP checks use system ping command (no raw socket privileges needed)
 - **Cross-Platform**: Supports Windows, Linux, and macOS
 - **Structured Logging**: Clean, colorized console output using zerolog
+- **Batch Mode**: Run without interactive prompts for automation
+- **Transcript Logging**: Save logs to file in JSON format
 - **Extensible**: Easy to add new check types via registry pattern
 
 ## Installation
@@ -79,6 +82,19 @@ htps 10.0.0.5
 
 # Combo checks (tries both HTTP and HTTPS)
 comb example.com
+
+# Lua script checks
+lua example_ping.lua 127.0.0.1
+lua tcp_port_check.lua example.com:443
+
+# Python script checks
+py example_ping.py 127.0.0.1
+py tcp_port_check.py example.com:443
+py http_check.py https://example.com
+
+# PowerShell script checks
+ps example_ping.ps1 127.0.0.1
+ps tcp_port_check.ps1 example.com:443
 ```
 
 ## Available Check Types
@@ -140,6 +156,67 @@ comb example.com
 comb flexible-server.com
 ```
 
+### LUA - Lua Script
+Executes a custom Lua script from the `scripts` folder for advanced checks.
+
+- **Code**: `LUA` (or `lua`)
+- **Format**: `lua scriptname.lua hostname`
+- **Scripts Location**: Must be in the `scripts/` folder
+- **Script Requirements**:
+  - Receives `hostname` as a global variable
+  - Must set `result` (boolean) for success/failure
+  - Optionally set `error_message` (string) for error details
+
+**Example**:
+```
+lua example_ping.lua 127.0.0.1
+lua tcp_port_check.lua example.com:443
+```
+
+See `scripts/README.md` for detailed script writing guide.
+
+### PY - Python Script
+Executes a custom Python script from the `scripts` folder for advanced checks.
+
+- **Code**: `PY` (or `py`)
+- **Format**: `py scriptname.py hostname`
+- **Scripts Location**: Must be in the `scripts/` folder
+- **Script Requirements**:
+  - Receives hostname as `sys.argv[1]`
+  - Must exit with code 0 (success) or non-zero (failure)
+  - Print error messages to stderr
+  - Uses `python3` command (falls back to `python` if unavailable)
+
+**Example**:
+```
+py example_ping.py 127.0.0.1
+py tcp_port_check.py example.com:443
+py http_check.py https://example.com
+```
+
+See `scripts/README.md` for detailed script writing guide.
+
+### PS - PowerShell Script
+Executes a custom PowerShell script from the `scripts` folder for advanced checks.
+
+- **Code**: `PS` (or `ps`)
+- **Format**: `ps scriptname.ps1 hostname`
+- **Scripts Location**: Must be in the `scripts/` folder
+- **Script Requirements**:
+  - Receives hostname as `$args[0]`
+  - Must exit with code 0 (success) or non-zero (failure)
+  - Write error messages to stderr (using `Write-Error` or `[Console]::Error.WriteLine()`)
+  - Uses `pwsh` command (PowerShell 7+, falls back to `powershell` if unavailable)
+  - Runs with `-NoProfile -NonInteractive` for consistent behavior
+
+**Example**:
+```
+ps example_ping.ps1 127.0.0.1
+ps tcp_port_check.ps1 example.com:443
+```
+
+See `scripts/README.md` for detailed script writing guide.
+
 ## Output
 
 netcheck provides structured logging with clear status messages:
@@ -164,12 +241,101 @@ When checks fail, detailed error messages are logged:
 
 ## Command Line Options
 
-```
-./netcheck [options]
+Built with the Cobra framework, netcheck provides a modern CLI experience with subcommands and flags:
 
-Options:
-  -config string
-        path to config file (default "netcheck.txt")
+```
+Usage:
+  netcheck [flags]
+  netcheck [command]
+
+Available Commands:
+  completion  Generate shell completion scripts
+  help        Help about any command
+  install     Install dependencies for netcheck
+    python      Install Python 3.14
+    powershell  Install PowerShell 7
+    uv          Install UV (Python package manager)
+
+Flags:
+  -b, --batch           batch mode - disable 'press any key' prompt
+  -f, --config string   path to config file (default "netcheck.txt")
+  -h, --help            help for netcheck
+  -l, --log string      path to transcript log file
+```
+
+### Install Command
+
+The `install` command helps set up dependencies required for netcheck functionality:
+
+```bash
+# Install Python 3.14 for PY check type
+netcheck install python
+netcheck install python --force        # Force reinstall
+netcheck install python --skip-verify  # Skip verification
+
+# Install PowerShell 7 for PS check type
+netcheck install powershell
+netcheck install powershell --force        # Force reinstall
+netcheck install powershell --skip-verify  # Skip verification
+
+# Install UV for Python package management
+netcheck install uv
+netcheck install uv --force        # Force reinstall
+netcheck install uv --skip-verify  # Skip verification
+```
+
+**Python 3.14 installer** supports:
+- **Windows**: Uses winget, chocolatey, or provides manual installation instructions
+- **macOS**: Uses Homebrew or provides manual installation instructions
+- **Linux**: Uses system package manager (apt, dnf, yum, zypper, pacman)
+
+**PowerShell 7 installer** supports:
+- **Windows**: Uses winget, chocolatey, or provides manual installation instructions
+- **macOS**: Uses Homebrew (cask) or provides manual installation instructions
+- **Linux**: Uses system package manager (apt, dnf, yum, zypper, snap) with Microsoft repositories
+
+**UV installer** supports:
+- **Windows**: Uses official PowerShell installer, pip, or cargo
+- **macOS**: Uses Homebrew, official curl installer, or pip
+- **Linux**: Uses official curl installer, pip, or cargo
+
+UV is an extremely fast Python package and project manager that can replace pip,
+pip-tools, poetry, and more. Learn more at https://github.com/astral-sh/uv
+```
+
+### Examples
+
+```bash
+# Use default config (netcheck.txt)
+./netcheck
+
+# Use custom config file (long form)
+./netcheck --config /path/to/config.txt
+# or short form
+./netcheck -f /path/to/config.txt
+
+# Batch mode (no interactive prompt)
+./netcheck --batch
+# or short form
+./netcheck -b
+
+# Save transcript to file
+./netcheck --log transcript.log
+# or short form
+./netcheck -l transcript.log
+
+# Combine multiple flags
+./netcheck -b -f myconfig.txt -l output.log
+./netcheck --batch --config myconfig.txt --log output.log
+
+# Get help
+./netcheck --help
+./netcheck -h
+
+# Install dependencies
+./netcheck install python      # For PY scripts
+./netcheck install powershell  # For PS scripts
+./netcheck install uv          # For Python package management
 ```
 
 ## Development
@@ -178,11 +344,19 @@ Options:
 
 ```
 netcheck/
-├── main.go              # Entry point, config parsing, orchestration
+├── main.go                   # Entry point (delegates to cmd package)
+├── cmd/
+│   ├── root.go               # Cobra root command, CLI handling, orchestration
+│   ├── install.go            # Install command for dependencies
+│   ├── install_python.go     # Python 3.14 installation logic
+│   ├── install_powershell.go # PowerShell 7 installation logic
+│   └── install_uv.go         # UV (Python package manager) installation logic
 ├── pkg/
 │   └── core/
-│       └── core_ctl.go  # Check type implementations and registry
-├── netcheck.txt         # Default configuration file
+│       └── core_ctl.go       # Check type implementations and registry
+├── scripts/                  # Custom Lua, Python, and PowerShell scripts
+│   └── README.md             # Script writing guide
+├── netcheck.txt              # Default configuration file
 ├── go.mod
 └── README.md
 ```
@@ -280,14 +454,17 @@ Packages are created in the `dist/` directory.
 ## Dependencies
 
 - [github.com/rs/zerolog](https://github.com/rs/zerolog) - Structured logging
+- [github.com/yuin/gopher-lua](https://github.com/yuin/gopher-lua) - Lua interpreter for custom check scripts
+- [github.com/spf13/cobra](https://github.com/spf13/cobra) - Modern CLI framework
 
 ## Use Cases
 
 - **Infrastructure Monitoring**: Verify connectivity to servers and services
 - **Pre-Deployment Checks**: Validate network requirements before deploying applications
 - **Network Diagnostics**: Quick health checks across multiple hosts
-- **CI/CD Pipelines**: Verify service availability in automated workflows
+- **CI/CD Pipelines**: Verify service availability in automated workflows (use `-b` flag)
 - **Load Balancer Validation**: Check multiple backend servers
+- **Custom Health Checks**: Write custom Lua or Python scripts for application-specific checks
 
 ## License
 
